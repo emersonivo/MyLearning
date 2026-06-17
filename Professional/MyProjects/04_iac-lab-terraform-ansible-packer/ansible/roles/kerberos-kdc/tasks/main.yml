@@ -1,0 +1,36 @@
+---
+# Role: kerberos-kdc
+# Installs and configures MIT Kerberos KDC
+
+- name: Install Kerberos KDC packages
+  apt:
+    name:
+      - krb5-kdc
+      - krb5-admin-server
+      - krb5-config
+    state: present
+    update_cache: yes
+
+- name: Deploy krb5.conf
+  template:
+    src: krb5.conf.j2
+    dest: /etc/krb5.conf
+    mode: '0644'
+
+- name: Create Kerberos realm
+  command: kdb5_util create -s -r {{ kerberos_realm }} -P "{{ kerberos_master_password }}"
+  args:
+    creates: /var/lib/krb5kdc/principal
+
+- name: Start and enable KDC services
+  systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: yes
+  loop:
+    - krb5-kdc
+    - krb5-admin-server
+
+- name: Add admin principal
+  command: kadmin.local -q "addprinc -pw {{ admin_password }} admin@{{ kerberos_realm }}"
+  ignore_errors: yes

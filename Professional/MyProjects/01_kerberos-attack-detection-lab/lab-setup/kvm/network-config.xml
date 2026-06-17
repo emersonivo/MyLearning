@@ -1,0 +1,19 @@
+<!-- KVM Isolated Network for Kerberos Lab -->
+<!-- sudo virsh net-define network-config.xml -->
+<!-- sudo virsh net-start kerberos-lab -->
+<network>
+  <name>kerberos-lab</name>
+  <bridge name='br-kerberos' stp='on' delay='0'/>
+  <mac address='52:54:00:12:88:00'/>
+  <ip address='192.168.88.1' netmask='255.255.255.0'>
+    <dhcp>
+      <range start='192.168.88.100' end='192.168.88.200'/>
+      <host mac='52:54:00:12:88:10' name='kali'    ip='192.168.88.10'/>
+      <host mac='52:54:00:12:88:20' name='kdc'     ip='192.168.88.20'/>
+      <host mac='52:54:00:12:88:30' name='client1' ip='192.168.88.30'/>
+      <host mac='52:54:00:12:88:31' name='client2' ip='192.168.88.31'/>
+      <host mac='52:54:00:12:88:fe' name='monitor' ip='192.168.88.254'/>
+    </dhcp>
+  </ip>
+  <!-- No forwarding = fully isolated network -->
+</network>

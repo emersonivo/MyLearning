@@ -1,0 +1,43 @@
+# Security Policies for KVM Multi-Tenant Environment
+
+networks:
+  management:
+    cidr: "192.168.1.0/24"
+    allowed_ports: [22, 443, 8080]
+    isolation: strict
+  production:
+    cidr: "192.168.2.0/24"
+    allowed_ports: [80, 443, 5432]
+    isolation: strict
+  development:
+    cidr: "192.168.3.0/24"
+    allowed_ports: [22, 80, 443, 3000, 8080]
+    isolation: standard
+  dmz:
+    cidr: "192.168.4.0/24"
+    allowed_ports: [80, 443]
+    isolation: strict
+
+security_checks:
+  - name: selinux_enabled
+    severity: critical
+    remediation: "Enable SELinux: setenforce 1"
+  - name: cpu_pinning
+    severity: medium
+    remediation: "Configure CPU pinning to prevent cross-VM timing attacks"
+  - name: disk_encryption
+    severity: high
+    remediation: "Enable LUKS encryption on VM disks"
+  - name: network_isolation
+    severity: critical
+    remediation: "Verify bridge isolation with iptables rules"
+
+thresholds:
+  failed_ssh_attempts: 5
+  anomaly_detection_window_minutes: 60
+  alert_cooldown_minutes: 15
+
+ai_analysis:
+  model: "claude-sonnet-4-20250514"
+  max_tokens: 1000
+  context_window_hours: 24

@@ -1,0 +1,36 @@
+---
+# Role: kerberos-client
+# Configures Kerberos client on VMs
+
+- name: Install Kerberos client
+  apt:
+    name:
+      - krb5-user
+      - libpam-krb5
+    state: present
+    update_cache: yes
+
+- name: Deploy krb5.conf
+  template:
+    src: krb5.conf.j2
+    dest: /etc/krb5.conf
+    mode: '0644'
+
+- name: Enable SSH GSSAPI authentication
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?{{ item.key }}"
+    line: "{{ item.key }} {{ item.value }}"
+  loop:
+    - { key: 'GSSAPIAuthentication', value: 'yes' }
+    - { key: 'GSSAPICleanupCredentials', value: 'yes' }
+  notify: restart sshd
+
+- name: Test Kerberos connectivity
+  command: kinit -n @{{ kerberos_realm }}
+  ignore_errors: yes
+  register: kinit_test
+
+- name: Show kinit result
+  debug:
+    msg: "Kerberos test: {{ 'OK' if kinit_test.rc == 0 else 'Check KDC connectivity' }}"

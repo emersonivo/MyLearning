@@ -1,0 +1,7 @@
+---
+# Global variables for all hosts
+kerberos_realm: "LAB.LOCAL"
+kerberos_domain: "lab.local"
+kdc_ip: "192.168.88.20"
+admin_password: "Password123!"
+kerberos_master_password: "MasterKey2024!"

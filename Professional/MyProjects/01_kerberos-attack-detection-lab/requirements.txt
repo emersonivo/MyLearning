@@ -1,0 +1,13 @@
+# Attack scripts
+impacket>=0.10.0
+colorama>=0.4.6
+
+# Detection engine
+pyshark>=0.6
+scapy>=2.5.0
+
+# AI analysis
+anthropic>=0.20.0
+
+# Utilities
+psutil>=5.9.0

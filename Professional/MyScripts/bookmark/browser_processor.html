@@ -1,0 +1,484 @@
+<!DOCTYPE html> # Save as browser_processor.html
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bookmark Processor - Browser Version</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            margin-top: 20px;
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            font-weight: 300;
+        }
+        .upload-area {
+            border: 3px dashed #3498db;
+            border-radius: 10px;
+            padding: 30px;
+            text-align: center;
+            background: #f8f9fa;
+            margin: 20px 0;
+            transition: all 0.3s ease;
+        }
+        .upload-area:hover {
+            border-color: #2980b9;
+            background: #e8f4fd;
+        }
+        .upload-area.dragover {
+            border-color: #27ae60;
+            background: #e8f8ef;
+        }
+        #fileInput {
+            display: none;
+        }
+        .upload-btn {
+            background: #3498db;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+        .upload-btn:hover {
+            background: #2980b9;
+            transform: translateY(-2px);
+        }
+        .process-btn {
+            background: #27ae60;
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 18px;
+            display: block;
+            margin: 20px auto;
+            transition: all 0.3s ease;
+            font-weight: 500;
+        }
+        .process-btn:hover {
+            background: #219a52;
+            transform: translateY(-2px);
+        }
+        .process-btn:disabled {
+            background: #95a5a6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .results {
+            display: none;
+            margin-top: 30px;
+            animation: fadeIn 0.5s ease-in;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .results.show {
+            display: block;
+        }
+        .success-card {
+            background: #e8f8ef;
+            border: 1px solid #27ae60;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .success-card h3 {
+            color: #27ae60;
+            margin-top: 0;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .stat-card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            border: 1px solid #e9ecef;
+        }
+        .stat-number {
+            font-size: 2em;
+            font-weight: bold;
+            color: #3498db;
+        }
+        .stat-label {
+            color: #6c757d;
+            font-size: 0.9em;
+        }
+        .folder-list {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 15px 0;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .folder-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .folder-item:last-child {
+            border-bottom: none;
+        }
+        .folder-name {
+            font-weight: 500;
+            color: #2c3e50;
+        }
+        .folder-count {
+            background: #3498db;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.8em;
+        }
+        .download-section {
+            text-align: center;
+            margin-top: 25px;
+            padding: 20px;
+            background: #e8f4fd;
+            border-radius: 10px;
+        }
+        .download-btn {
+            background: #3498db;
+            color: white;
+            padding: 12px 30px;
+            text-decoration: none;
+            border-radius: 25px;
+            display: inline-block;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        .download-btn:hover {
+            background: #2980b9;
+            transform: translateY(-2px);
+        }
+        .loading {
+            text-align: center;
+            color: #6c757d;
+            font-style: italic;
+            padding: 20px;
+        }
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            border-left: 4px solid #f44336;
+        }
+        .info-text {
+            color: #6c757d;
+            font-size: 0.9em;
+            line-height: 1.6;
+            margin: 15px 0;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 12px;
+            border: 1px solid #e9ecef;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>\U0001f517 Bookmark Processor</h1>
+        
+        <div style="background: #e8f4fd; padding: 20px; border-radius: 10px; margin-bottom: 25px;">
+            <h3 style="margin-top: 0; color: #2c3e50;">Clean up your browser bookmarks</h3>
+            <p style="margin-bottom: 0; color: #555;">
+                This tool processes your exported bookmarks to remove duplicates and organize them by folders.
+                Simply upload your bookmarks HTML file and get a cleaned version ready for import.
+            </p>
+        </div>
+
+        <div class="upload-area" id="uploadArea">
+            <div style="margin-bottom: 15px;">
+                <strong>\U0001f4c1 Upload your bookmarks file</strong>
+            </div>
+            <input type="file" id="fileInput" accept=".html,.htm">
+            <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
+                Choose Bookmarks File
+            </button>
+            <div style="margin-top: 10px; color: #6c757d; font-size: 0.9em;">
+                Drag & drop or click to select your bookmarks HTML file
+            </div>
+        </div>
+
+        <button id="processBtn" class="process-btn" disabled>Process Bookmarks</button>
+
+        <div id="results" class="results">
+            <div id="output"></div>
+            <div id="downloadSection" class="download-section" style="display: none;">
+                <h3>\u2705 Processing Complete!</h3>
+                <p>Your bookmarks have been cleaned and organized. Ready to download:</p>
+                <a id="downloadLink" href="#" download="cleaned_bookmarks.html" class="download-btn">
+                    \U0001f4e5 Download Cleaned Bookmarks
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class BookmarkProcessor {
+            constructor() {
+                this.fileInput = document.getElementById('fileInput');
+                this.processBtn = document.getElementById('processBtn');
+                this.uploadArea = document.getElementById('uploadArea');
+                this.resultsDiv = document.getElementById('results');
+                this.outputDiv = document.getElementById('output');
+                this.downloadSection = document.getElementById('downloadSection');
+                this.downloadLink = document.getElementById('downloadLink');
+                
+                this.currentFile = null;
+                
+                this.setupEventListeners();
+            }
+
+            setupEventListeners() {
+                this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
+                this.processBtn.addEventListener('click', () => this.processBookmarks());
+                
+                // Drag and drop
+                this.uploadArea.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    this.uploadArea.classList.add('dragover');
+                });
+                
+                this.uploadArea.addEventListener('dragleave', () => {
+                    this.uploadArea.classList.remove('dragover');
+                });
+                
+                this.uploadArea.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    this.uploadArea.classList.remove('dragover');
+                    const files = e.dataTransfer.files;
+                    if (files.length > 0) {
+                        this.currentFile = files[0];
+                        this.updateUI();
+                    }
+                });
+            }
+
+            handleFileSelect(event) {
+                const file = event.target.files[0];
+                if (file) {
+                    this.currentFile = file;
+                    this.updateUI();
+                }
+            }
+
+            updateUI() {
+                if (this.currentFile) {
+                    this.processBtn.disabled = false;
+                    this.uploadArea.innerHTML = `
+                        <div style="margin-bottom: 15px;">
+                            <strong>\U0001f4c4 File selected:</strong> ${this.currentFile.name}
+                        </div>
+                        <div style="color: #6c757d; font-size: 0.9em;">
+                            Size: ${(this.currentFile.size / 1024).toFixed(1)} KB
+                        </div>
+                        <button class="upload-btn" onclick="document.getElementById('fileInput').click()" style="margin-top: 10px;">
+                            Change File
+                        </button>
+                    `;
+                }
+            }
+
+            async processBookmarks() {
+                if (!this.currentFile) return;
+
+                try {
+                    this.showLoading();
+                    
+                    const content = await this.readFile(this.currentFile);
+                    const processedData = this.parseAndProcessBookmarks(content);
+                    
+                    this.showResults(processedData);
+                    this.createDownloadableFile(processedData.htmlContent);
+                    
+                } catch (error) {
+                    this.showError(error.message);
+                }
+            }
+
+            readFile(file) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve(e.target.result);
+                    reader.onerror = () => reject(new Error('Failed to read file'));
+                    reader.readAsText(file);
+                });
+            }
+
+            parseAndProcessBookmarks(content) {
+                const bookmarks = {};
+                const seenUrls = new Set();
+                let totalProcessed = 0;
+                let duplicatesRemoved = 0;
+                
+                // Parse bookmarks using regex
+                const dtRegex = /<DT>([\s\S]*?)<\/DT>/gi;
+                let currentFolder = 'Root';
+                let match;
+                
+                while ((match = dtRegex.exec(content)) !== null) {
+                    const dtContent = match[1];
+                    
+                    // Check for folder (H3)
+                    const h3Match = dtContent.match(/<H3[^>]*>(.*?)<\/H3>/i);
+                    if (h3Match) {
+                        currentFolder = h3Match[1].trim();
+                        if (!bookmarks[currentFolder]) {
+                            bookmarks[currentFolder] = [];
+                        }
+                        continue;
+                    }
+                    
+                    // Check for bookmark (A tag)
+                    const aMatch = dtContent.match(/<A\s+([^>]*)>(.*?)<\/A>/i);
+                    if (aMatch) {
+                        const attrs = aMatch[1];
+                        const title = aMatch[2].trim();
+                        
+                        // Extract href
+                        const hrefMatch = attrs.match(/HREF=["'](.*?)["']/i);
+                        if (hrefMatch) {
+                            const url = hrefMatch[1];
+                            
+                            if (url && !seenUrls.has(url)) {
+                                seenUrls.add(url);
+                                
+                                const bookmark = {
+                                    url: url,
+                                    title: title || url,
+                                    add_date: this.extractAttr(attrs, 'ADD_DATE'),
+                                    last_modified: this.extractAttr(attrs, 'LAST_MODIFIED'),
+                                    icon_uri: this.extractAttr(attrs, 'ICON_URI'),
+                                    icon: this.extractAttr(attrs, 'ICON'),
+                                    tags: this.extractAttr(attrs, 'TAGS')
+                                };
+                                
+                                if (!bookmarks[currentFolder]) {
+                                    bookmarks[currentFolder] = [];
+                                }
+                                bookmarks[currentFolder].push(bookmark);
+                                totalProcessed++;
+                            } else if (url) {
+                                duplicatesRemoved++;
+                            }
+                        }
+                    }
+                }
+                
+                return { bookmarks, seenUrls, totalProcessed, duplicatesRemoved };
+            }
+
+            extractAttr(attrs, attrName) {
+                const regex = new RegExp(`${attrName}=["'](.*?)["']`, 'i');
+                const match = attrs.match(regex);
+                return match ? match[1] : '';
+            }
+
+            showResults(data) {
+                let totalBookmarks = 0;
+                for (const bookmarkList of Object.values(data.bookmarks)) {
+                    totalBookmarks += bookmarkList.length;
+                }
+                
+                const statsHtml = `
+                    <div class="success-card">
+                        <h3>\U0001f389 Processing Complete!</h3>
+                        <div class="stats">
+                            <div class="stat-card">
+                                <div class="stat-number">${totalBookmarks}</div>
+                                <div class="stat-label">Unique Bookmarks</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-number">${Object.keys(data.bookmarks).length}</div>
+                                <div class="stat-label">Folders</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-number">${data.duplicatesRemoved}</div>
+                                <div class="stat-label">Duplicates Removed</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                const folderHtml = Object.entries(data.bookmarks)
+                    .map(([folder, bookmarks]) => 
+                        `<div class="folder-item">
+                            <span class="folder-name">${folder}</span>
+                            <span class="folder-count">${bookmarks.length}</span>
+                        </div>`
+                    ).join('');
+                
+                this.outputDiv.innerHTML = statsHtml + `
+                    <div class="info-text">
+                        <strong>Organized folders:</strong>
+                        <div class="folder-list">${folderHtml}</div>
+                    </div>
+                `;
+                
+                this.downloadSection.style.display = 'block';
+                this.resultsDiv.classList.add('show');
+            }
+
+            createDownloadableFile(htmlContent) {
+                const blob = new Blob([htmlContent], { type: 'text/html' });
+                const url = URL.createObjectURL(blob);
+                this.downloadLink.href = url;
+            }
+
+            showLoading() {
+                this.processBtn.disabled = true;
+                this.processBtn.textContent = 'Processing...';
+                this.resultsDiv.classList.add('show');
+                this.outputDiv.innerHTML = '<div class="loading">Processing bookmarks, please wait...</div>';
+                this.downloadSection.style.display = 'none';
+            }
+
+            showError(message) {
+                this.outputDiv.innerHTML = `<div class="error">\u274c Error: ${message}</div>`;
+                this.processBtn.disabled = false;
+                this.processBtn.textContent = 'Process Bookmarks';
+            }
+        }
+
+        // Initialize the processor when DOM is loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            new BookmarkProcessor();
+        });
+    </script>
+</body>
+</html>

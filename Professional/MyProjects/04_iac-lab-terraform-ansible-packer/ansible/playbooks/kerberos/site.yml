@@ -1,0 +1,23 @@
+---
+# Kerberos Lab — Main Playbook
+# Usage: ansible-playbook -i inventory/kerberos site.yml
+
+- name: Wait for systems to be ready
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Wait for connection
+      wait_for_connection:
+        timeout: 300
+
+- name: Configure KDC
+  hosts: kdc
+  become: yes
+  roles:
+    - kerberos-kdc
+
+- name: Configure Clients
+  hosts: clients
+  become: yes
+  roles:
+    - kerberos-client

@@ -1,0 +1,80 @@
+#"python_basico_pdfs.txt"
+from fpdf import FPDF
+import os
+
+# ===== CONFIGURA\UffffffffO =====
+input_file = "python_basico_pdfs.txt"  # arquivo com o conte\Uffffffffue criamos
+output_folder = "PDFs_Python_Basico/"
+
+pdf_title_font = ("Arial", "B", 16)
+pdf_section_font = ("Arial", "B", 12)
+pdf_text_font = ("Arial", "", 11)
+pdf_code_font = ("Courier", "", 10)
+
+# ===== CLASSE PDF =====
+class PDF(FPDF):
+    def header(self):
+        self.set_font("Arial", "B", 14)
+        self.cell(0, 10, "Cyberdude - Python B\Uffffffffco", ln=True, align="C")
+        self.ln(5)
+
+    def add_section(self, title, text, is_code=False):
+        self.set_font(*pdf_section_font)
+        self.multi_cell(0, 8, title)
+        self.ln(2)
+        if is_code:
+            self.set_font(*pdf_code_font)
+            # adicionar c\Uffffffffo com recuo
+            code_lines = text.strip().split('\n')
+            for line in code_lines:
+                self.multi_cell(0, 6, '    ' + line)
+        else:
+            self.set_font(*pdf_text_font)
+            self.multi_cell(0, 6, text)
+        self.ln(4)
+
+# ===== FUN\UffffffffO PARA GERAR PDFs =====
+def generate_pdfs(text):
+    episodes = text.split('---\n')  # separar por epis\Uffffffff
+    for idx, ep in enumerate(episodes):
+        lines = [line.strip() for line in ep.strip().split('\n') if line.strip()]
+        if not lines:
+            continue
+        pdf_title = lines[0].replace('#', '').strip()
+        content_lines = lines[1:]
+
+        pdf = PDF()
+        pdf.add_page()
+        pdf.set_font(*pdf_title_font)
+        pdf.multi_cell(0, 10, pdf_title, align="C")
+        pdf.ln(5)
+
+        section_title = ""
+        section_text = ""
+        is_code = False
+        for line in content_lines:
+            if line.startswith("##"):
+                if section_title:
+                    pdf.add_section(section_title, section_text, is_code)
+                section_title = line.replace("##", "").strip()
+                section_text = ""
+                is_code = False
+            elif line.startswith("```"):
+                is_code = not is_code  # alterna entre c\Uffffffffo e texto
+            else:
+                section_text += line + "\n"
+        if section_title:
+            pdf.add_section(section_title, section_text, is_code)
+
+        # Salvar PDF
+        output_path = f"{output_folder}{idx+1:02d}_{pdf_title.replace(' ', '_')}.pdf"
+        pdf.output(output_path)
+        print(f"PDF gerado: {output_path}")
+
+# ===== EXECU\UffffffffO =====
+if __name__ == "__main__":
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+    with open(input_file, "r", encoding="utf-8") as f:
+        text = f.read()
+    generate_pdfs(text)

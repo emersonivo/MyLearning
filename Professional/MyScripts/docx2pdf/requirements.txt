@@ -1,0 +1,7 @@
+# Requirements for simple_docx_to_pdf.py
+# Install with: pip install -r requirements.txt
+
+docx2pdf>=0.1.0
+
+# Note: docx_to_pdf.py has NO Python dependencies
+# It only requires LibreOffice to be installed on your system

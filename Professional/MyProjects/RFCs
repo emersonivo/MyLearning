@@ -1,0 +1,22 @@
+https://datatracker.ietf.org/doc/html/rfc2119 -> Key words for use in RFCs to Indicate Requirement Levels
+
+https://datatracker.ietf.org/doc/html/rfc4120 -> The Kerberos Network Authentication Service (V5)
+https://datatracker.ietf.org/doc/html/rfc4121 -> The Kerberos Version 5 - Generic Security Service Application Program Interface (GSS-API) Mechanism: Version 2
+
+https://datatracker.ietf.org/doc/html/rfc4537 -> Kerberos Cryptosystem Negotiation Extension
+https://datatracker.ietf.org/doc/html/rfc4556 -> Public Key Cryptography for Initial Authentication in Kerberos (PKINIT)
+https://datatracker.ietf.org/doc/html/rfc4757 -> The RC4-HMAC Kerberos Encryption Types Used by Microsoft Windows
+https://datatracker.ietf.org/doc/html/rfc6649 -> Deprecate DES, RC4-HMAC-EXP, and Other Weak Cryptographic Algorithms in Kerberos
+https://datatracker.ietf.org/doc/html/rfc8429 -> Deprecate Triple-DES (3DES) and RC4 in Kerberos
+
+https://datatracker.ietf.org/doc/html/rfc5021 -> Extended Kerberos Version 5 Key Distribution Center (KDC) Exchanges over TCP
+https://datatracker.ietf.org/doc/html/rfc5896 -> Generic Security Service Application Program Interface (GSS-API): Delegate if Approved by Policy
+https://datatracker.ietf.org/doc/html/rfc6111 -> Additional Kerberos Naming Constraints
+https://datatracker.ietf.org/doc/html/rfc6112 -> Anonymity Support for Kerberos
+https://datatracker.ietf.org/doc/html/rfc8062 -> Anonymity Support for Kerberos
+https://datatracker.ietf.org/doc/html/rfc6113 -> A Generalized Framework for Kerberos Pre-Authentication
+
+https://datatracker.ietf.org/doc/html/rfc6806 -> Kerberos Principal Name Canonicalization and Cross-Realm Referrals
+https://datatracker.ietf.org/doc/html/rfc7751 -> Kerberos Authorization Data Container Authenticated by Multiple Message Authentication Codes (MACs)
+https://datatracker.ietf.org/doc/html/rfc8129 -> Authentication Indicator in Kerberos Tickets
+https://datatracker.ietf.org/doc/html/rfc8553 -> DNS AttrLeaf Changes: Fixing Specifications That Use Underscored Node Names

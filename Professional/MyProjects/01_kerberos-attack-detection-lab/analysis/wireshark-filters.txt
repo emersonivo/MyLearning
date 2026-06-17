@@ -1,0 +1,20 @@
+# Wireshark Display Filters — Kerberos Attack Detection
+
+## BASIC
+kerberos                                        # All Kerberos traffic
+kerberos.msg_type == 10                         # AS-REQ
+kerberos.msg_type == 11                         # AS-REP
+kerberos.msg_type == 12                         # TGS-REQ
+kerberos.msg_type == 13                         # TGS-REP
+kerberos.msg_type == 30                         # Errors
+
+## ATTACK DETECTION
+kerberos.error_code == 24                       # Brute Force (KDC_ERR_PREAUTH_FAILED)
+kerberos.msg_type == 10 and not kerberos.padata # AS-REP Roasting
+ip.src == 192.168.88.10 and kerberos            # Traffic from attacker IP
+
+## TSHARK COMMANDS
+# Count failed auth by source:
+# tshark -r attack.pcap -Y "kerberos.error_code == 24" -T fields -e ip.src | sort | uniq -c
+# Timeline:
+# tshark -r attack.pcap -Y "kerberos" -T fields -e frame.time -e ip.src -e kerberos.msg_type

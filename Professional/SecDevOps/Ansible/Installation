@@ -1,0 +1,221 @@
+1. Install Prerequisites
+	# Install Ansible and dependencies
+	sudo apt update
+	sudo apt install -y ansible python3-libvirt libvirt-daemon-system libvirt-clients genisoimage
+
+	# Install the required Ansible collection
+	ansible-galaxy collection install community.libvirt
+
+2. Prepare Your Files
+	- user.conf:
+		username=myuser
+		password=mypass
+
+	- mount.conf:
+		host_path=/host/shared/folder
+
+	- main.yaml:
+		---
+		- name: Deploy and configure Ubuntu VM for Citrix
+		  hosts: localhost
+		  become: no
+		  vars_files:
+		    - user.conf
+		    - mount.conf
+		  vars:
+		    vm_name: "sandbox-firefox-5999"
+		    memory_kib: 12337152
+		    vcpus: 4
+		    disk_path: "/myvirtuals/kvms/Sandboxes/sandbox-firefox-template.qcow2"
+		    mac_addr: "52:54:00:cf:30:f7"
+		    spice_port: 5999
+		    iso_path: "/path/to/ubuntu.iso"
+
+		  tasks:
+		    - name: Ensure base disk exists (copy template if needed)
+		      copy:
+		        src: "{{ iso_path }}"
+		        dest: "{{ disk_path }}"
+		        remote_src: yes
+		      when: not (disk_path is exists)
+
+		    - name: Generate cloud-init user-data
+		      template:
+		        src: user-data.j2
+		        dest: "/tmp/{{ vm_name }}-user-data"
+		      vars:
+		        username: "{{ username }}"
+		        password: "{{ password | password_hash('sha512') }}"
+
+		    - name: Generate cloud-init meta-data
+		      copy:
+		        content: "instance-id: {{ vm_name }}\nlocal-hostname: {{ vm_name }}\n"
+		        dest: "/tmp/{{ vm_name }}-meta-data"
+
+		    - name: Create cloud-init ISO
+		      command: >
+		        genisoimage -output /tmp/{{ vm_name }}-cidata.iso
+		        -volid cidata -joliet -rock
+		        /tmp/{{ vm_name }}-user-data /tmp/{{ vm_name }}-meta-data
+		      args:
+		        creates: "/tmp/{{ vm_name }}-cidata.iso"
+
+		    - name: Define and start VM using virt
+		      community.libvirt.virt:
+		        command: define
+		        xml: |
+		          <domain type='kvm'>
+		            <name>{{ vm_name }}</name>
+		            <memory unit='KiB'>{{ memory_kib }}</memory>
+		            <currentMemory unit='KiB'>{{ memory_kib }}</currentMemory>
+		            <vcpu placement='static'>{{ vcpus }}</vcpu>
+		            <os>
+		              <type arch='x86_64'>hvm</type>
+		              <boot dev='hd'/>
+		            </os>
+		            <devices>
+		              <emulator>/usr/bin/qemu-system-x86_64</emulator>
+		              <disk type='file' device='disk'>
+		                <driver name='qemu' type='qcow2'/>
+		                <source file='{{ disk_path }}'/>
+		                <target dev='vda' bus='virtio'/>
+		              </disk>
+		              <disk type='file' device='cdrom'>
+		                <driver name='qemu' type='raw'/>
+		                <source file='/tmp/{{ vm_name }}-cidata.iso'/>
+		                <target dev='hda' bus='ide'/>
+		              </disk>
+		              <interface type='network'>
+		                <mac address='{{ mac_addr }}'/>
+		                <source network='172-publ'/>
+		                <model type='virtio'/>
+		              </interface>
+		              <graphics type='spice' port='{{ spice_port }}' autoport='no'>
+		                <listen type='address'/>
+		                <image compression='off'/>
+		              </graphics>
+		              <channel type='spicevmc'>
+		                <target type='virtio' name='com.redhat.spice.0'/>
+		              </channel>
+		            </devices>
+		          </domain>
+		      register: vm_result
+
+		    - name: Start VM if not running
+		      community.libvirt.virt:
+		        name: "{{ vm_name }}"
+		        state: running
+
+		    - name: Wait for SSH to be available
+		      wait_for_connection:
+		        delay: 10
+		        timeout: 300
+
+		    - name: Update system
+		      apt:
+		        update_cache: yes
+		        upgrade: dist
+
+		    - name: Install Citrix Workspace dependencies
+		      apt:
+		        name:
+		          - libwebkit2gtk-4.0-37
+		          - libasound2
+		          - libatk-bridge2.0-0
+		          - libatspi2.0-0
+		          - libxss1
+		          - libxtst6
+		          - libxrandr2
+		          - libxcomposite1
+		          - libxdamage1
+		          - libxfixes3
+		          - libgtk-3-0
+		          - libnss3
+		          - libnspr4
+		          - libpango-1.0-0
+		          - libcairo2
+		          - libgdk-pixbuf-2.0-0
+		          - libgl1
+		        state: present
+
+		    - name: Download and install latest Citrix Workspace
+		      shell: |
+		        wget -O /tmp/citrix.deb https://downloads.citrix.com/.../icaclient_*.deb
+		        dpkg -i /tmp/citrix.deb || apt-get install -f -y
+		      args:
+		        creates: /opt/Citrix/ICAClient
+
+		    - name: Install zoomvdi plugin
+		      shell: |
+		        wget -O /tmp/zoom.deb https://example.com/zoomvdi-universal-plugin-ubuntu-*.deb
+		        dpkg -i /tmp/zoom.deb
+		      args:
+		        creates: /usr/lib/zoomvdi
+
+		    - name: Create Remote directory
+		      file:
+		        path: "/home/{{ username }}/Remote"
+		        state: directory
+		        owner: "{{ username }}"
+		        group: "{{ username }}"
+
+		    - name: Mount host folder (via 9p or NFS/SMB \u2013 assuming 9p virtio-fs)
+		      mount:
+		        path: "/home/{{ username }}/Remote"
+		        src: "hostshare"
+		        fstype: 9p
+		        opts: "trans=virtio,version=9p2000.L"
+		        state: mounted
+		      # Note: Requires host path exported via libvirt filesystem
+
+3. Run the Playbook
+	cd ~/citrix-vm-deploy
+
+	# If using plain config files (not vault):
+	ansible-playbook \
+	  -i localhost, \
+	  --connection=local \
+	  deploy-citrix-vm.yml
+
+	# If you used Ansible Vault for secrets:
+	ansible-playbook \
+	  -i localhost, \
+	  --connection=local \
+	  --ask-vault-pass \
+	  deploy-citrix-vm.yml
+
+4. (Optional) Destroy VM for Testing
+	# Undefine and delete VM (keep disk if needed)
+	virsh destroy sandbox-firefox-5999
+	virsh undefine sandbox-firefox-5999 --remove-all-storage  # \u26a0\ufe0f deletes disk!
+
+	# Or just stop it:
+	virsh shutdown sandbox-firefox-5999
+
+Full Command Summary
+	# Setup
+		sudo apt install -y ansible python3-libvirt libvirt-daemon-system genisoimage
+		sudo usermod -aG libvirt $USER
+		newgrp libvirt
+
+	# Install collection
+		ansible-galaxy collection install community.libvirt
+
+	# Create project dir
+		mkdir ~/citrix-vm-deploy && cd ~/citrix-vm-deploy
+
+	# Create your files: user.conf, mount.conf, user-data.j2, deploy-citrix-vm.yml
+
+	# Run
+		ansible-playbook -i localhost, --connection=local deploy-citrix-vm.yml
+
+
+
+
+
+
+
+
+
+
+

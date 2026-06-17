@@ -1,0 +1,5 @@
+libvirt-python>=9.0.0
+anthropic>=0.20.0
+colorama>=0.4.6
+pyyaml>=6.0
+psutil>=5.9.0
