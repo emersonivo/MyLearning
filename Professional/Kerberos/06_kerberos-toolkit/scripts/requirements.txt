@@ -1,0 +1,8 @@
+impacket>=0.11.0
+pyasn1>=0.5.0
+pycryptodome>=3.18.0
+ldap3>=2.9.1
+dnspython>=2.4.0
+scapy>=2.5.0
+colorama>=0.4.6
+tqdm>=4.66.0
