@@ -1795,20 +1795,550 @@ echo "Lab complete!"
 ## Section 4: Blind Spots & Hiring Penalties
 
 ### 1. Confusing Load Average with CPU Utilization
-**Penalty:** Immediate rejection in technical interview  
-**Fix:** Always check process states, understand D state contribution
 
-### 2. Not Understanding Memory vs Cache
-**Penalty:** Misdiagnosis in production  
-**Fix:** Learn MemAvailable vs MemFree, understand page cache
+**What candidates say:** "The server is overloaded, load average is 15 and we only have 4 CPUs."
 
-### 3. Assuming write() = Data on Disk
-**Penalty:** Production data loss  
-**Fix:** Understand page cache, when to use fsync
+**Why it's wrong:** Load average includes processes in uninterruptible sleep (D state) waiting for I/O. High load with low CPU usage indicates I/O bottleneck, not CPU shortage.
 
-[Continues with remaining blind spots...]
+**Hiring penalty:** Immediate red flag. Shows no understanding of what load average measures. Cannot diagnose production issues correctly.
+
+**How to fix:**
+```bash
+# Always check process states
+ps -eo state,pid,cmd | grep "^D"  # Count processes in D state
+
+# Check CPU usage separately  
+mpstat 1 1  # Look at %idle
+
+# If load is high but CPU idle is >50%, problem is I/O not CPU
+iostat -x 1  # Check disk utilization and await time
+```
+
+**Interview test:** "Your 4-CPU server has load average of 8.0 but 75% CPU idle. What's wrong?"
+- **Correct answer:** 8 processes in R or D state on average. High %idle means they're in D state (I/O wait). Check disk I/O with iostat.
+- **Wrong answer:** "Need more CPU" or "System is overloaded" (too vague)
 
 ---
+
+### 2. Thinking "Free Memory" Means Low Memory
+
+**What candidates say:** "We need more RAM, free memory is only 2GB on a 32GB system."
+
+**Why it's wrong:** Linux uses "free" memory as page cache to speed up file access. Relevant metric is MemAvailable (includes reclaimable cache), not MemFree.
+
+**Hiring penalty:** Shows lack of production Linux experience. Any SRE knows low MemFree is normal and desirable.
+
+**How to fix:**
+```bash
+# Check MemAvailable, not MemFree
+grep -E 'MemTotal|MemFree|MemAvailable|Cached' /proc/meminfo
+
+# MemAvailable = MemFree + reclaimable cache
+# This is what applications can actually use
+
+# Low MemAvailable (<10%) = actual memory pressure
+# Low MemFree but high MemAvailable = normal, healthy system
+```
+
+**Interview test:** "System has MemFree=2GB, Cached=25GB, MemAvailable=20GB on 32GB system. Is memory low?"
+- **Correct answer:** No. MemAvailable is 20GB (62%), plenty of memory. Cache is reclaimable.
+- **Wrong answer:** "Yes, only 2GB free" (conflates Free with Available)
+
+---
+
+### 3. Not Understanding cgroup Isolation
+
+**What candidates say:** "Container is slow but the host has 50% idle CPU. The container needs more CPU."
+
+**Why it's wrong:** Containers have cgroup CPU limits independent of host capacity. Container may be hitting its cpu.max quota while host CPUs are idle.
+
+**Hiring penalty:** In 2025, not understanding cgroups = not understanding modern infrastructure. Unacceptable for platform/SRE roles.
+
+**How to fix:**
+```bash
+# Find container's cgroup
+docker inspect <container> | grep Cgroup
+
+# Check CPU limit
+cat /sys/fs/cgroup/system.slice/docker-<id>.scope/cpu.max
+
+# Check throttling
+cat /sys/fs/cgroup/system.slice/docker-<id>.scope/cpu.stat
+# Look for nr_throttled > 0
+
+# If throttled, increase limit or check if container actually needs more CPU
+```
+
+**Interview test:** "Container shows 100% CPU usage but host is 70% idle. Why?"
+- **Correct answer:** Container is at its cgroup cpu.max limit. Check cpu.stat for throttling. May need to increase container's CPU limit.
+- **Wrong answer:** "Something wrong with the host" (doesn't understand isolation)
+
+---
+
+### 4. Assuming write() = Data on Disk
+
+**What candidates say:** "The application crashed but write() returned success, so data should be on disk. This is a kernel bug."
+
+**Why it's wrong:** write() returns when data is in page cache (kernel memory), not when it's physically on disk. Without fsync(), crash = data loss.
+
+**Hiring penalty:** This causes actual production data loss. Shows fundamental misunderstanding of the I/O path.
+
+**How to fix:**
+```bash
+# Understand the write path:
+# Application -> write() -> page cache (returns) -> disk (async)
+
+# For critical data, use fsync
+fd = open("critical.dat", O_WRONLY);
+write(fd, data, len);
+fsync(fd);  // Blocks until data is on disk
+close(fd);
+
+# Check dirty pages waiting to be written
+grep Dirty /proc/meminfo
+```
+
+**Interview test:** "Application wrote 1GB in 1 second but iostat shows only 10MB/s writes. Where's the data?"
+- **Correct answer:** Page cache (dirty pages). Kernel will flush asynchronously. Check /proc/meminfo Dirty field.
+- **Wrong answer:** "Data is lost" or "iostat is broken"
+
+---
+
+[Continue with remaining 6 blind spots in similar detail...]
+
+
+### 6. systemd as Control Plane (Weight: 0.75)
+
+#### Lab 6-1 (Easy): Service Creation and Dependencies
+
+**Objective:** Create systemd services and understand dependency management.
+
+**Time:** 15 minutes
+
+```bash
+# SETUP
+echo "=== systemd Service Lab ==="
+echo ""
+
+# STEP 1: Create a simple service
+echo "=== Creating Test Service ==="
+
+# Create script that the service will run
+cat > /tmp/test_service.sh << 'EOF'
+#!/bin/bash
+echo "Service started at $(date)" >> /tmp/test_service.log
+echo "PID: $$" >> /tmp/test_service.log
+
+while true; do
+    echo "Service running: $(date)" >> /tmp/test_service.log
+    sleep 5
+done
+EOF
+
+chmod +x /tmp/test_service.sh
+echo "✓ Service script created"
+echo ""
+
+# STEP 2: Create systemd unit file
+echo "=== Creating systemd Unit ==="
+
+sudo tee /etc/systemd/system/test-app.service > /dev/null << 'EOF'
+[Unit]
+Description=Test Application Service
+After=network.target
+Documentation=https://example.com/docs
+
+[Service]
+Type=simple
+ExecStart=/tmp/test_service.sh
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+echo "✓ Unit file created at /etc/systemd/system/test-app.service"
+echo ""
+
+# STEP 3: Reload systemd
+echo "=== Reloading systemd ==="
+sudo systemctl daemon-reload
+echo "✓ systemd reloaded (picks up new unit file)"
+echo ""
+
+# STEP 4: Check unit status
+echo "=== Checking Unit Status ==="
+systemctl status test-app.service --no-pager
+echo ""
+
+# STEP 5: Start service
+echo "=== Starting Service ==="
+sudo systemctl start test-app.service
+sleep 2
+
+systemctl status test-app.service --no-pager
+echo ""
+
+# STEP 6: Check service output
+echo "=== Service Output ==="
+cat /tmp/test_service.log
+echo ""
+
+# STEP 7: Check journal logs
+echo "=== Journal Logs ==="
+journalctl -u test-app.service --no-pager -n 10
+echo ""
+
+# STEP 8: Test restart behavior
+echo "=== Testing Restart Behavior ==="
+SERVICE_PID=$(systemctl show test-app.service -p MainPID --value)
+echo "Service PID: $SERVICE_PID"
+
+echo "Killing service process..."
+sudo kill -9 $SERVICE_PID
+sleep 6  # Wait for restart (RestartSec=5s)
+
+NEW_PID=$(systemctl show test-app.service -p MainPID --value)
+echo "New PID after restart: $NEW_PID"
+
+if [ "$NEW_PID" != "$SERVICE_PID" ] && [ "$NEW_PID" != "0" ]; then
+    echo "✓ Service automatically restarted (Restart=on-failure)"
+else
+    echo "⚠ Service did not restart as expected"
+fi
+echo ""
+
+# STEP 9: Create dependent service
+echo "=== Creating Dependent Service ==="
+
+sudo tee /etc/systemd/system/test-worker.service > /dev/null << 'EOF'
+[Unit]
+Description=Test Worker Service
+Requires=test-app.service
+After=test-app.service
+
+[Service]
+Type=simple
+ExecStart=/bin/bash -c 'echo "Worker started" >> /tmp/test_worker.log; sleep 300'
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+echo "✓ Dependent service created"
+echo ""
+
+# STEP 10: Test dependency
+echo "=== Testing Dependencies ==="
+sudo systemctl start test-worker.service
+sleep 2
+
+echo "Status of both services:"
+systemctl status test-app.service test-worker.service --no-pager | grep -E "●|Active"
+echo ""
+
+echo "Stopping test-app (with Requires dependency)..."
+sudo systemctl stop test-app.service
+sleep 2
+
+echo "Worker status after stopping test-app:"
+systemctl status test-worker.service --no-pager | grep Active
+
+echo ""
+echo "✓ Worker stopped when test-app stopped (Requires=)"
+echo ""
+
+# STEP 11: Demonstrate After= vs Requires=
+echo "=== Understanding After= vs Requires= ==="
+cat << 'EOF'
+Dependency types:
+  • Requires=: If this service stops, dependent also stops
+  • Wants=: Soft dependency, doesn't stop dependent
+  • After=: Start order only (A After=B means start A after B)
+  • Before=: Start order only (A Before=B means start A before B)
+
+Common mistake: Using After= when you mean Requires=
+  After= only controls order, not dependency!
+
+Example:
+  After=network.target    - Start after network, but network can stop
+  Requires=network.target - If network stops, this service stops too
+EOF
+echo ""
+
+# STEP 12: Analyze dependency tree
+echo "=== Service Dependency Tree ==="
+systemctl list-dependencies test-worker.service
+echo ""
+
+# CLEANUP
+echo "=== Cleanup ==="
+sudo systemctl stop test-app.service test-worker.service 2>/dev/null
+sudo systemctl disable test-app.service test-worker.service 2>/dev/null
+sudo rm -f /etc/systemd/system/test-app.service /etc/systemd/system/test-worker.service
+sudo systemctl daemon-reload
+rm -f /tmp/test_service.sh /tmp/test_service.log /tmp/test_worker.log
+
+echo "=== SUMMARY ==="
+echo "Key concepts:"
+echo "1. Service types: simple, forking, oneshot, dbus, notify"
+echo "2. Type=simple: Process is the main process (most common)"
+echo "3. Type=forking: Process forks and parent exits (legacy daemons)"
+echo "4. Restart=: on-failure, always, on-abnormal, on-abort, on-watchdog"
+echo "5. After=/Before=: Start ordering"
+echo "6. Requires=/Wants=: Dependency relationships"
+echo ""
+echo "Debug commands:"
+echo "  systemctl status <service>       - Current status"
+echo "  journalctl -u <service>          - Service logs"
+echo "  systemctl list-dependencies      - Show deps"
+echo "  systemd-analyze critical-chain   - Boot timing"
+echo ""
+echo "Lab complete!"
+```
+
+**Verification questions:**
+1. What's the difference between Requires= and After=?
+   - Answer: Requires= creates dependency (if A requires B, B stopping stops A). After= only controls start order. Common to need both: "After=B" "Requires=B".
+
+2. What happens when a service with Restart=on-failure crashes?
+   - Answer: systemd automatically restarts it after RestartSec delay. Check with journalctl for restart events and RestartCounter.
+
+3. How do you debug a service that fails to start?
+   - Answer: `systemctl status <service>` shows recent logs. `journalctl -xe` shows extended logs. `systemctl cat <service>` shows unit file. Common issues: wrong ExecStart path, permissions, missing dependencies.
+
+---
+
+### 7. /proc Filesystem Exploration (Weight: 0.92)
+
+#### Lab 7-1: Deep /proc Exploration
+
+**Objective:** Master reading /proc for process and system information.
+
+**Time:** 20 minutes
+
+```bash
+# SETUP
+echo "=== /proc Filesystem Deep Dive ==="
+echo ""
+
+# STEP 1: Find your shell's PID and explore
+SHELL_PID=$$
+echo "=== Exploring Process $SHELL_PID (this shell) ==="
+echo ""
+
+# STEP 2: Basic process information
+echo "--- Basic Info (/proc/$SHELL_PID/status) ---"
+cat /proc/$SHELL_PID/status | head -20
+echo ""
+
+echo "Key fields explained:"
+echo "  Name: Process command name"
+echo "  State: S (sleeping), R (running), D (disk sleep), Z (zombie), T (stopped)"
+echo "  Pid: Process ID"
+echo "  PPid: Parent process ID"
+echo "  Uid: Real, effective, saved, filesystem UIDs"
+echo "  VmSize: Total virtual memory"
+echo "  VmRSS: Resident set size (actual RAM used)"
+echo "  Threads: Number of threads"
+echo ""
+
+# STEP 3: Command line and environment
+echo "--- Command Line (/proc/$SHELL_PID/cmdline) ---"
+cat /proc/$SHELL_PID/cmdline | tr '\0' ' '
+echo -e "\n"
+
+echo "--- Environment (/proc/$SHELL_PID/environ) ---"
+cat /proc/$SHELL_PID/environ | tr '\0' '\n' | head -10
+echo "... (truncated)"
+echo ""
+
+# STEP 4: File descriptors
+echo "--- Open File Descriptors (/proc/$SHELL_PID/fd/) ---"
+ls -l /proc/$SHELL_PID/fd/
+echo ""
+echo "0=stdin, 1=stdout, 2=stderr"
+echo "Other numbers are open files/sockets"
+echo ""
+
+# STEP 5: Memory maps
+echo "--- Memory Mappings (/proc/$SHELL_PID/maps) ---"
+cat /proc/$SHELL_PID/maps | head -15
+echo "... (truncated)"
+echo ""
+echo "Columns: address, perms, offset, dev, inode, pathname"
+echo "Shows: executable, libraries, heap, stack, anonymous mappings"
+echo ""
+
+# STEP 6: Create a test process to analyze
+echo "=== Creating Test Process ==="
+cat > /tmp/test_proc.c << 'EOF'
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <fcntl.h>
+
+int main() {
+    // Open some files
+    int fd1 = open("/etc/hostname", O_RDONLY);
+    int fd2 = open("/tmp/test_data.txt", O_WRONLY | O_CREAT, 0644);
+    
+    // Allocate memory
+    char *mem = malloc(10 * 1024 * 1024);  // 10MB
+    
+    // Write some data
+    write(fd2, "test data\n", 10);
+    
+    printf("PID: %d\n", getpid());
+    printf("Press Ctrl+C to exit\n");
+    fflush(stdout);
+    
+    // Sleep forever
+    while(1) sleep(100);
+    
+    return 0;
+}
+EOF
+
+gcc -o /tmp/test_proc /tmp/test_proc.c
+/tmp/test_proc &
+TEST_PID=$!
+sleep 2
+
+echo "Test process PID: $TEST_PID"
+echo ""
+
+# STEP 7: Analyze test process
+echo "=== Analyzing Test Process ==="
+
+echo "--- Memory Usage ---"
+grep -E 'VmSize|VmRSS|VmData|VmStk|VmExe' /proc/$TEST_PID/status
+echo ""
+
+echo "--- Open Files ---"
+ls -l /proc/$TEST_PID/fd/
+echo ""
+
+echo "--- Using readlink to see what files are open ---"
+for fd in /proc/$TEST_PID/fd/*; do
+    echo "$(basename $fd) -> $(readlink $fd 2>/dev/null)"
+done
+echo ""
+
+# STEP 8: System-wide information
+echo "=== System-Wide Information ==="
+
+echo "--- CPU Info (/proc/cpuinfo) ---"
+grep -E 'processor|model name|cpu MHz' /proc/cpuinfo | head -8
+echo "... (total $(nproc) CPUs)"
+echo ""
+
+echo "--- Memory Info (/proc/meminfo) ---"
+grep -E 'MemTotal|MemFree|MemAvailable|Buffers|Cached|Dirty|Writeback|Slab' /proc/meminfo
+echo ""
+
+echo "--- Load Average (/proc/loadavg) ---"
+cat /proc/loadavg
+echo "Columns: 1min 5min 15min running/total last_pid"
+echo ""
+
+echo "--- Uptime (/proc/uptime) ---"
+cat /proc/uptime
+echo "Columns: total_seconds idle_seconds"
+echo ""
+
+# STEP 9: Network information
+echo "=== Network Information ==="
+
+echo "--- Network Statistics (/proc/net/dev) ---"
+cat /proc/net/dev | head -5
+echo ""
+
+echo "--- TCP Connections (/proc/net/tcp) ---"
+cat /proc/net/tcp | head -5
+echo ""
+echo "Note: IPs are in hex, need to decode"
+echo ""
+
+# STEP 10: Detailed memory breakdown
+echo "=== Detailed Memory Analysis with smaps ==="
+echo "Memory mappings with details (/proc/$TEST_PID/smaps):"
+cat /proc/$TEST_PID/smaps | head -30
+echo "... (truncated)"
+echo ""
+echo "Shows: RSS, PSS (proportional set size), private/shared pages per mapping"
+echo ""
+
+# STEP 11: Practice: Find memory leak
+echo "=== Practice: Finding Memory Leaks ==="
+echo "To find a memory leak:"
+echo "1. Watch VmRSS in /proc/PID/status over time"
+echo "2. Check /proc/PID/smaps for growing mappings"
+echo "3. Look for growing heap or anonymous mappings"
+echo ""
+
+# STEP 12: Quick reference
+echo "=== Quick Reference: Essential /proc Files ==="
+cat << 'EOF'
+Per-process (/proc/PID/):
+  status       - Summary: state, memory, UIDs, etc
+  cmdline      - Command line with args (null-separated)
+  environ      - Environment variables (null-separated)
+  fd/          - Open file descriptors (symlinks)
+  maps         - Memory mappings (address, perms, file)
+  smaps        - Detailed memory map (with RSS, PSS)
+  stat         - Raw stats (state, times, etc)
+  io           - I/O counters (read_bytes, write_bytes)
+  cgroup       - cgroup membership
+
+System-wide (/proc/):
+  meminfo      - Memory: total, free, available, cached
+  cpuinfo      - CPU: model, frequency, flags
+  loadavg      - Load average and running processes
+  stat         - CPU time breakdown
+  uptime       - System uptime and idle time
+  vmstat       - Virtual memory statistics
+  net/         - Network: tcp, udp, dev, sockstat
+  sys/         - Tunables: kernel parameters
+  
+Kernel:
+  /proc/sys/   - Tunable parameters (sysctl interface)
+  /proc/sys/vm/- Virtual memory tunables
+  /proc/sys/net/- Network tunables
+EOF
+
+echo ""
+
+# CLEANUP
+kill $TEST_PID 2>/dev/null
+rm -f /tmp/test_proc.c /tmp/test_proc /tmp/test_data.txt
+
+echo "=== SUMMARY ==="
+echo "✓ /proc is the primary interface to kernel internals"
+echo "✓ All monitoring tools (ps, top, lsof) just read /proc"
+echo "✓ In production, you may only have /proc (no tools installed)"
+echo "✓ Practice reading /proc directly for debugging"
+echo ""
+echo "Lab complete!"
+```
+
+**Verification questions:**
+1. How do you find what files a process has open without lsof?
+   - Answer: `ls -l /proc/PID/fd/` or `readlink /proc/PID/fd/*`
+
+2. What's the difference between VmSize and VmRSS?
+   - Answer: VmSize is total virtual memory (address space). VmRSS is actual RAM used (resident set size). VmSize can be huge (overcommit), VmRSS is what matters for OOM.
+
+3. How do you check if a process is in a cgroup?
+   - Answer: `cat /proc/PID/cgroup` shows cgroup membership. Each line is "hierarchy:controllers:path".
+
+---
+
+
 
 ## Section 5: Learning Velocity Validation
 
@@ -2442,552 +2972,6 @@ echo "Lab complete!"
 ---
 
 [Continuing with additional detailed labs...]
-
----
-
-## Complete Section 4: Blind Spots & Hiring Penalties
-
-### 1. Confusing Load Average with CPU Utilization
-
-**What candidates say:** "The server is overloaded, load average is 15 and we only have 4 CPUs."
-
-**Why it's wrong:** Load average includes processes in uninterruptible sleep (D state) waiting for I/O. High load with low CPU usage indicates I/O bottleneck, not CPU shortage.
-
-**Hiring penalty:** Immediate red flag. Shows no understanding of what load average measures. Cannot diagnose production issues correctly.
-
-**How to fix:**
-```bash
-# Always check process states
-ps -eo state,pid,cmd | grep "^D"  # Count processes in D state
-
-# Check CPU usage separately  
-mpstat 1 1  # Look at %idle
-
-# If load is high but CPU idle is >50%, problem is I/O not CPU
-iostat -x 1  # Check disk utilization and await time
-```
-
-**Interview test:** "Your 4-CPU server has load average of 8.0 but 75% CPU idle. What's wrong?"
-- **Correct answer:** 8 processes in R or D state on average. High %idle means they're in D state (I/O wait). Check disk I/O with iostat.
-- **Wrong answer:** "Need more CPU" or "System is overloaded" (too vague)
-
----
-
-### 2. Thinking "Free Memory" Means Low Memory
-
-**What candidates say:** "We need more RAM, free memory is only 2GB on a 32GB system."
-
-**Why it's wrong:** Linux uses "free" memory as page cache to speed up file access. Relevant metric is MemAvailable (includes reclaimable cache), not MemFree.
-
-**Hiring penalty:** Shows lack of production Linux experience. Any SRE knows low MemFree is normal and desirable.
-
-**How to fix:**
-```bash
-# Check MemAvailable, not MemFree
-grep -E 'MemTotal|MemFree|MemAvailable|Cached' /proc/meminfo
-
-# MemAvailable = MemFree + reclaimable cache
-# This is what applications can actually use
-
-# Low MemAvailable (<10%) = actual memory pressure
-# Low MemFree but high MemAvailable = normal, healthy system
-```
-
-**Interview test:** "System has MemFree=2GB, Cached=25GB, MemAvailable=20GB on 32GB system. Is memory low?"
-- **Correct answer:** No. MemAvailable is 20GB (62%), plenty of memory. Cache is reclaimable.
-- **Wrong answer:** "Yes, only 2GB free" (conflates Free with Available)
-
----
-
-### 3. Not Understanding cgroup Isolation
-
-**What candidates say:** "Container is slow but the host has 50% idle CPU. The container needs more CPU."
-
-**Why it's wrong:** Containers have cgroup CPU limits independent of host capacity. Container may be hitting its cpu.max quota while host CPUs are idle.
-
-**Hiring penalty:** In 2025, not understanding cgroups = not understanding modern infrastructure. Unacceptable for platform/SRE roles.
-
-**How to fix:**
-```bash
-# Find container's cgroup
-docker inspect <container> | grep Cgroup
-
-# Check CPU limit
-cat /sys/fs/cgroup/system.slice/docker-<id>.scope/cpu.max
-
-# Check throttling
-cat /sys/fs/cgroup/system.slice/docker-<id>.scope/cpu.stat
-# Look for nr_throttled > 0
-
-# If throttled, increase limit or check if container actually needs more CPU
-```
-
-**Interview test:** "Container shows 100% CPU usage but host is 70% idle. Why?"
-- **Correct answer:** Container is at its cgroup cpu.max limit. Check cpu.stat for throttling. May need to increase container's CPU limit.
-- **Wrong answer:** "Something wrong with the host" (doesn't understand isolation)
-
----
-
-### 4. Assuming write() = Data on Disk
-
-**What candidates say:** "The application crashed but write() returned success, so data should be on disk. This is a kernel bug."
-
-**Why it's wrong:** write() returns when data is in page cache (kernel memory), not when it's physically on disk. Without fsync(), crash = data loss.
-
-**Hiring penalty:** This causes actual production data loss. Shows fundamental misunderstanding of the I/O path.
-
-**How to fix:**
-```bash
-# Understand the write path:
-# Application -> write() -> page cache (returns) -> disk (async)
-
-# For critical data, use fsync
-fd = open("critical.dat", O_WRONLY);
-write(fd, data, len);
-fsync(fd);  // Blocks until data is on disk
-close(fd);
-
-# Check dirty pages waiting to be written
-grep Dirty /proc/meminfo
-```
-
-**Interview test:** "Application wrote 1GB in 1 second but iostat shows only 10MB/s writes. Where's the data?"
-- **Correct answer:** Page cache (dirty pages). Kernel will flush asynchronously. Check /proc/meminfo Dirty field.
-- **Wrong answer:** "Data is lost" or "iostat is broken"
-
----
-
-[Continue with remaining 6 blind spots in similar detail...]
-
-
-### 6. systemd as Control Plane (Weight: 0.75)
-
-#### Lab 6-1 (Easy): Service Creation and Dependencies
-
-**Objective:** Create systemd services and understand dependency management.
-
-**Time:** 15 minutes
-
-```bash
-# SETUP
-echo "=== systemd Service Lab ==="
-echo ""
-
-# STEP 1: Create a simple service
-echo "=== Creating Test Service ==="
-
-# Create script that the service will run
-cat > /tmp/test_service.sh << 'EOF'
-#!/bin/bash
-echo "Service started at $(date)" >> /tmp/test_service.log
-echo "PID: $$" >> /tmp/test_service.log
-
-while true; do
-    echo "Service running: $(date)" >> /tmp/test_service.log
-    sleep 5
-done
-EOF
-
-chmod +x /tmp/test_service.sh
-echo "✓ Service script created"
-echo ""
-
-# STEP 2: Create systemd unit file
-echo "=== Creating systemd Unit ==="
-
-sudo tee /etc/systemd/system/test-app.service > /dev/null << 'EOF'
-[Unit]
-Description=Test Application Service
-After=network.target
-Documentation=https://example.com/docs
-
-[Service]
-Type=simple
-ExecStart=/tmp/test_service.sh
-Restart=on-failure
-RestartSec=5s
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-echo "✓ Unit file created at /etc/systemd/system/test-app.service"
-echo ""
-
-# STEP 3: Reload systemd
-echo "=== Reloading systemd ==="
-sudo systemctl daemon-reload
-echo "✓ systemd reloaded (picks up new unit file)"
-echo ""
-
-# STEP 4: Check unit status
-echo "=== Checking Unit Status ==="
-systemctl status test-app.service --no-pager
-echo ""
-
-# STEP 5: Start service
-echo "=== Starting Service ==="
-sudo systemctl start test-app.service
-sleep 2
-
-systemctl status test-app.service --no-pager
-echo ""
-
-# STEP 6: Check service output
-echo "=== Service Output ==="
-cat /tmp/test_service.log
-echo ""
-
-# STEP 7: Check journal logs
-echo "=== Journal Logs ==="
-journalctl -u test-app.service --no-pager -n 10
-echo ""
-
-# STEP 8: Test restart behavior
-echo "=== Testing Restart Behavior ==="
-SERVICE_PID=$(systemctl show test-app.service -p MainPID --value)
-echo "Service PID: $SERVICE_PID"
-
-echo "Killing service process..."
-sudo kill -9 $SERVICE_PID
-sleep 6  # Wait for restart (RestartSec=5s)
-
-NEW_PID=$(systemctl show test-app.service -p MainPID --value)
-echo "New PID after restart: $NEW_PID"
-
-if [ "$NEW_PID" != "$SERVICE_PID" ] && [ "$NEW_PID" != "0" ]; then
-    echo "✓ Service automatically restarted (Restart=on-failure)"
-else
-    echo "⚠ Service did not restart as expected"
-fi
-echo ""
-
-# STEP 9: Create dependent service
-echo "=== Creating Dependent Service ==="
-
-sudo tee /etc/systemd/system/test-worker.service > /dev/null << 'EOF'
-[Unit]
-Description=Test Worker Service
-Requires=test-app.service
-After=test-app.service
-
-[Service]
-Type=simple
-ExecStart=/bin/bash -c 'echo "Worker started" >> /tmp/test_worker.log; sleep 300'
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-echo "✓ Dependent service created"
-echo ""
-
-# STEP 10: Test dependency
-echo "=== Testing Dependencies ==="
-sudo systemctl start test-worker.service
-sleep 2
-
-echo "Status of both services:"
-systemctl status test-app.service test-worker.service --no-pager | grep -E "●|Active"
-echo ""
-
-echo "Stopping test-app (with Requires dependency)..."
-sudo systemctl stop test-app.service
-sleep 2
-
-echo "Worker status after stopping test-app:"
-systemctl status test-worker.service --no-pager | grep Active
-
-echo ""
-echo "✓ Worker stopped when test-app stopped (Requires=)"
-echo ""
-
-# STEP 11: Demonstrate After= vs Requires=
-echo "=== Understanding After= vs Requires= ==="
-cat << 'EOF'
-Dependency types:
-  • Requires=: If this service stops, dependent also stops
-  • Wants=: Soft dependency, doesn't stop dependent
-  • After=: Start order only (A After=B means start A after B)
-  • Before=: Start order only (A Before=B means start A before B)
-
-Common mistake: Using After= when you mean Requires=
-  After= only controls order, not dependency!
-
-Example:
-  After=network.target    - Start after network, but network can stop
-  Requires=network.target - If network stops, this service stops too
-EOF
-echo ""
-
-# STEP 12: Analyze dependency tree
-echo "=== Service Dependency Tree ==="
-systemctl list-dependencies test-worker.service
-echo ""
-
-# CLEANUP
-echo "=== Cleanup ==="
-sudo systemctl stop test-app.service test-worker.service 2>/dev/null
-sudo systemctl disable test-app.service test-worker.service 2>/dev/null
-sudo rm -f /etc/systemd/system/test-app.service /etc/systemd/system/test-worker.service
-sudo systemctl daemon-reload
-rm -f /tmp/test_service.sh /tmp/test_service.log /tmp/test_worker.log
-
-echo "=== SUMMARY ==="
-echo "Key concepts:"
-echo "1. Service types: simple, forking, oneshot, dbus, notify"
-echo "2. Type=simple: Process is the main process (most common)"
-echo "3. Type=forking: Process forks and parent exits (legacy daemons)"
-echo "4. Restart=: on-failure, always, on-abnormal, on-abort, on-watchdog"
-echo "5. After=/Before=: Start ordering"
-echo "6. Requires=/Wants=: Dependency relationships"
-echo ""
-echo "Debug commands:"
-echo "  systemctl status <service>       - Current status"
-echo "  journalctl -u <service>          - Service logs"
-echo "  systemctl list-dependencies      - Show deps"
-echo "  systemd-analyze critical-chain   - Boot timing"
-echo ""
-echo "Lab complete!"
-```
-
-**Verification questions:**
-1. What's the difference between Requires= and After=?
-   - Answer: Requires= creates dependency (if A requires B, B stopping stops A). After= only controls start order. Common to need both: "After=B" "Requires=B".
-
-2. What happens when a service with Restart=on-failure crashes?
-   - Answer: systemd automatically restarts it after RestartSec delay. Check with journalctl for restart events and RestartCounter.
-
-3. How do you debug a service that fails to start?
-   - Answer: `systemctl status <service>` shows recent logs. `journalctl -xe` shows extended logs. `systemctl cat <service>` shows unit file. Common issues: wrong ExecStart path, permissions, missing dependencies.
-
----
-
-### 7. /proc Filesystem Exploration (Weight: 0.92)
-
-#### Lab 7-1: Deep /proc Exploration
-
-**Objective:** Master reading /proc for process and system information.
-
-**Time:** 20 minutes
-
-```bash
-# SETUP
-echo "=== /proc Filesystem Deep Dive ==="
-echo ""
-
-# STEP 1: Find your shell's PID and explore
-SHELL_PID=$$
-echo "=== Exploring Process $SHELL_PID (this shell) ==="
-echo ""
-
-# STEP 2: Basic process information
-echo "--- Basic Info (/proc/$SHELL_PID/status) ---"
-cat /proc/$SHELL_PID/status | head -20
-echo ""
-
-echo "Key fields explained:"
-echo "  Name: Process command name"
-echo "  State: S (sleeping), R (running), D (disk sleep), Z (zombie), T (stopped)"
-echo "  Pid: Process ID"
-echo "  PPid: Parent process ID"
-echo "  Uid: Real, effective, saved, filesystem UIDs"
-echo "  VmSize: Total virtual memory"
-echo "  VmRSS: Resident set size (actual RAM used)"
-echo "  Threads: Number of threads"
-echo ""
-
-# STEP 3: Command line and environment
-echo "--- Command Line (/proc/$SHELL_PID/cmdline) ---"
-cat /proc/$SHELL_PID/cmdline | tr '\0' ' '
-echo -e "\n"
-
-echo "--- Environment (/proc/$SHELL_PID/environ) ---"
-cat /proc/$SHELL_PID/environ | tr '\0' '\n' | head -10
-echo "... (truncated)"
-echo ""
-
-# STEP 4: File descriptors
-echo "--- Open File Descriptors (/proc/$SHELL_PID/fd/) ---"
-ls -l /proc/$SHELL_PID/fd/
-echo ""
-echo "0=stdin, 1=stdout, 2=stderr"
-echo "Other numbers are open files/sockets"
-echo ""
-
-# STEP 5: Memory maps
-echo "--- Memory Mappings (/proc/$SHELL_PID/maps) ---"
-cat /proc/$SHELL_PID/maps | head -15
-echo "... (truncated)"
-echo ""
-echo "Columns: address, perms, offset, dev, inode, pathname"
-echo "Shows: executable, libraries, heap, stack, anonymous mappings"
-echo ""
-
-# STEP 6: Create a test process to analyze
-echo "=== Creating Test Process ==="
-cat > /tmp/test_proc.c << 'EOF'
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <fcntl.h>
-
-int main() {
-    // Open some files
-    int fd1 = open("/etc/hostname", O_RDONLY);
-    int fd2 = open("/tmp/test_data.txt", O_WRONLY | O_CREAT, 0644);
-    
-    // Allocate memory
-    char *mem = malloc(10 * 1024 * 1024);  // 10MB
-    
-    // Write some data
-    write(fd2, "test data\n", 10);
-    
-    printf("PID: %d\n", getpid());
-    printf("Press Ctrl+C to exit\n");
-    fflush(stdout);
-    
-    // Sleep forever
-    while(1) sleep(100);
-    
-    return 0;
-}
-EOF
-
-gcc -o /tmp/test_proc /tmp/test_proc.c
-/tmp/test_proc &
-TEST_PID=$!
-sleep 2
-
-echo "Test process PID: $TEST_PID"
-echo ""
-
-# STEP 7: Analyze test process
-echo "=== Analyzing Test Process ==="
-
-echo "--- Memory Usage ---"
-grep -E 'VmSize|VmRSS|VmData|VmStk|VmExe' /proc/$TEST_PID/status
-echo ""
-
-echo "--- Open Files ---"
-ls -l /proc/$TEST_PID/fd/
-echo ""
-
-echo "--- Using readlink to see what files are open ---"
-for fd in /proc/$TEST_PID/fd/*; do
-    echo "$(basename $fd) -> $(readlink $fd 2>/dev/null)"
-done
-echo ""
-
-# STEP 8: System-wide information
-echo "=== System-Wide Information ==="
-
-echo "--- CPU Info (/proc/cpuinfo) ---"
-grep -E 'processor|model name|cpu MHz' /proc/cpuinfo | head -8
-echo "... (total $(nproc) CPUs)"
-echo ""
-
-echo "--- Memory Info (/proc/meminfo) ---"
-grep -E 'MemTotal|MemFree|MemAvailable|Buffers|Cached|Dirty|Writeback|Slab' /proc/meminfo
-echo ""
-
-echo "--- Load Average (/proc/loadavg) ---"
-cat /proc/loadavg
-echo "Columns: 1min 5min 15min running/total last_pid"
-echo ""
-
-echo "--- Uptime (/proc/uptime) ---"
-cat /proc/uptime
-echo "Columns: total_seconds idle_seconds"
-echo ""
-
-# STEP 9: Network information
-echo "=== Network Information ==="
-
-echo "--- Network Statistics (/proc/net/dev) ---"
-cat /proc/net/dev | head -5
-echo ""
-
-echo "--- TCP Connections (/proc/net/tcp) ---"
-cat /proc/net/tcp | head -5
-echo ""
-echo "Note: IPs are in hex, need to decode"
-echo ""
-
-# STEP 10: Detailed memory breakdown
-echo "=== Detailed Memory Analysis with smaps ==="
-echo "Memory mappings with details (/proc/$TEST_PID/smaps):"
-cat /proc/$TEST_PID/smaps | head -30
-echo "... (truncated)"
-echo ""
-echo "Shows: RSS, PSS (proportional set size), private/shared pages per mapping"
-echo ""
-
-# STEP 11: Practice: Find memory leak
-echo "=== Practice: Finding Memory Leaks ==="
-echo "To find a memory leak:"
-echo "1. Watch VmRSS in /proc/PID/status over time"
-echo "2. Check /proc/PID/smaps for growing mappings"
-echo "3. Look for growing heap or anonymous mappings"
-echo ""
-
-# STEP 12: Quick reference
-echo "=== Quick Reference: Essential /proc Files ==="
-cat << 'EOF'
-Per-process (/proc/PID/):
-  status       - Summary: state, memory, UIDs, etc
-  cmdline      - Command line with args (null-separated)
-  environ      - Environment variables (null-separated)
-  fd/          - Open file descriptors (symlinks)
-  maps         - Memory mappings (address, perms, file)
-  smaps        - Detailed memory map (with RSS, PSS)
-  stat         - Raw stats (state, times, etc)
-  io           - I/O counters (read_bytes, write_bytes)
-  cgroup       - cgroup membership
-
-System-wide (/proc/):
-  meminfo      - Memory: total, free, available, cached
-  cpuinfo      - CPU: model, frequency, flags
-  loadavg      - Load average and running processes
-  stat         - CPU time breakdown
-  uptime       - System uptime and idle time
-  vmstat       - Virtual memory statistics
-  net/         - Network: tcp, udp, dev, sockstat
-  sys/         - Tunables: kernel parameters
-  
-Kernel:
-  /proc/sys/   - Tunable parameters (sysctl interface)
-  /proc/sys/vm/- Virtual memory tunables
-  /proc/sys/net/- Network tunables
-EOF
-
-echo ""
-
-# CLEANUP
-kill $TEST_PID 2>/dev/null
-rm -f /tmp/test_proc.c /tmp/test_proc /tmp/test_data.txt
-
-echo "=== SUMMARY ==="
-echo "✓ /proc is the primary interface to kernel internals"
-echo "✓ All monitoring tools (ps, top, lsof) just read /proc"
-echo "✓ In production, you may only have /proc (no tools installed)"
-echo "✓ Practice reading /proc directly for debugging"
-echo ""
-echo "Lab complete!"
-```
-
-**Verification questions:**
-1. How do you find what files a process has open without lsof?
-   - Answer: `ls -l /proc/PID/fd/` or `readlink /proc/PID/fd/*`
-
-2. What's the difference between VmSize and VmRSS?
-   - Answer: VmSize is total virtual memory (address space). VmRSS is actual RAM used (resident set size). VmSize can be huge (overcommit), VmRSS is what matters for OOM.
-
-3. How do you check if a process is in a cgroup?
-   - Answer: `cat /proc/PID/cgroup` shows cgroup membership. Each line is "hierarchy:controllers:path".
 
 ---
 
